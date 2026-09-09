@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Разовый скрипт: находит в папке с PDF-статьями файлы, которых ещё нет
-в итоговом Excel-файле, прогоняет каждый через Claude по промпту
+в итоговом Excel-файле, прогоняет каждый через Gemini по промпту
 prompts/industry-digest-source-analysis.md и дописывает по нему строку
 в digest.xlsx.
 
@@ -10,10 +10,10 @@ prompts/industry-digest-source-analysis.md и дописывает по нему
     python scripts/analyze_new_sources.py
 
 Настройки — через .env (см. .env.example) или переменные окружения:
-    ANTHROPIC_API_KEY  — обязателен
-    PDF_DIR            — папка с PDF (по умолчанию: pdfs)
-    OUTPUT_XLSX        — итоговый файл (по умолчанию: digest.xlsx)
-    CLAUDE_MODEL       — модель Claude (по умолчанию: claude-sonnet-5)
+    GEMINI_API_KEY  — обязателен (бесплатный ключ: https://aistudio.google.com/apikey)
+    PDF_DIR         — папка с PDF (по умолчанию: pdfs)
+    OUTPUT_XLSX     — итоговый файл (по умолчанию: digest.xlsx)
+    GEMINI_MODEL    — модель Gemini (по умолчанию: gemini-2.5-flash)
 """
 
 from __future__ import annotations
@@ -21,12 +21,13 @@ from __future__ import annotations
 import json
 import os
 import sys
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 from pathlib import Path
 
 import pdfplumber
-from anthropic import Anthropic
 from dotenv import load_dotenv
+from google import genai
+from google.genai import types as genai_types
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 
@@ -129,32 +130,23 @@ def extract_pdf_text(pdf_path: Path) -> str:
     return full_text
 
 
-def call_claude(client: Anthropic, model: str, system_prompt: str, pdf_name: str, pdf_text: str) -> dict:
+def call_gemini(client: genai.Client, model: str, system_prompt: str, pdf_name: str, pdf_text: str) -> dict:
     if not pdf_text.strip():
         raise ValueError("не удалось извлечь текст из PDF (возможно, скан без OCR)")
 
-    message = client.messages.create(
+    response = client.models.generate_content(
         model=model,
-        max_tokens=2000,
-        system=system_prompt,
-        messages=[
-            {
-                "role": "user",
-                "content": (
-                    f"Файл источника: {pdf_name}\n\n"
-                    f"Текст источника:\n\n{pdf_text}"
-                ),
-            }
-        ],
+        contents=(
+            f"Файл источника: {pdf_name}\n\n"
+            f"Текст источника:\n\n{pdf_text}"
+        ),
+        config=genai_types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            response_mime_type="application/json",
+            max_output_tokens=2000,
+        ),
     )
-    raw = "".join(block.text for block in message.content if getattr(block, "type", "") == "text").strip()
-
-    # На случай, если модель всё же обернёт JSON в ```json ... ```.
-    if raw.startswith("```"):
-        raw = raw.strip("`")
-        if raw.lower().startswith("json"):
-            raw = raw[4:]
-        raw = raw.strip()
+    raw = (response.text or "").strip()
 
     try:
         return json.loads(raw)
@@ -212,16 +204,16 @@ def load_or_create_workbook(output_path: Path):
 def main() -> None:
     load_dotenv(REPO_ROOT / ".env")
 
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         sys.exit(
-            "ANTHROPIC_API_KEY не задан. Скопируй .env.example в .env и вставь ключ "
-            "(получить: https://console.anthropic.com/settings/keys)."
+            "GEMINI_API_KEY не задан. Скопируй .env.example в .env и вставь ключ "
+            "(получить бесплатно: https://aistudio.google.com/apikey)."
         )
 
     pdf_dir = REPO_ROOT / os.environ.get("PDF_DIR", "pdfs")
     output_path = REPO_ROOT / os.environ.get("OUTPUT_XLSX", "digest.xlsx")
-    model = os.environ.get("CLAUDE_MODEL", "claude-sonnet-5")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
     if not pdf_dir.exists():
         sys.exit(f"Папка с PDF не найдена: {pdf_dir}")
@@ -239,7 +231,7 @@ def main() -> None:
         return
 
     system_prompt = load_system_prompt()
-    client = Anthropic(api_key=api_key)
+    client = genai.Client(api_key=api_key)
 
     from datetime import datetime, timezone
 
@@ -250,7 +242,7 @@ def main() -> None:
         print(f"Обрабатываю: {pdf_path.name} ...")
         try:
             pdf_text = extract_pdf_text(pdf_path)
-            data = call_claude(client, model, system_prompt, pdf_path.name, pdf_text)
+            data = call_gemini(client, model, system_prompt, pdf_path.name, pdf_text)
             processed_at = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
             ws.append(to_row(pdf_path.name, data, processed_at))
             wb.save(output_path)  # сохраняем после каждого файла — прогресс не теряется

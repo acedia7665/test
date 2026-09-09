@@ -25,8 +25,8 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-Открой `.env` и вставь свой ключ Anthropic API в `ANTHROPIC_API_KEY`
-(получить ключ: https://console.anthropic.com/settings/keys).
+Открой `.env` и вставь свой ключ Gemini API в `GEMINI_API_KEY`
+(получить бесплатный ключ: https://aistudio.google.com/apikey).
 
 ### Использование
 
