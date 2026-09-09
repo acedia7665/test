@@ -31,6 +31,13 @@ from google.genai import types as genai_types
 from openpyxl import Workbook, load_workbook
 from openpyxl.utils import get_column_letter
 
+# Консоль Windows иногда использует не-UTF-8 кодировку по умолчанию —
+# принудительно переключаем stdout/stderr, чтобы кириллица в выводе
+# никогда не роняла скрипт ошибкой кодировки.
+for _stream in (sys.stdout, sys.stderr):
+    if hasattr(_stream, "reconfigure"):
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PROMPT_PATH = REPO_ROOT / "prompts" / "industry-digest-source-analysis.md"
 
@@ -202,9 +209,15 @@ def load_or_create_workbook(output_path: Path):
 
 
 def main() -> None:
-    load_dotenv(REPO_ROOT / ".env")
+    # Пробуем на всякий случай и utf-8-sig — Notepad на Windows иногда
+    # сохраняет .env с BOM-меткой, из-за которой первая переменная
+    # прочитается с мусорным символом в начале.
+    load_dotenv(REPO_ROOT / ".env", encoding="utf-8-sig")
 
-    api_key = os.environ.get("GEMINI_API_KEY")
+    # .strip("﻿") на случай, если BOM всё же попал внутрь значения,
+    # плюс обычный strip() от случайных пробелов/переносов строки при
+    # копировании ключа.
+    api_key = (os.environ.get("GEMINI_API_KEY") or "").strip().strip("﻿")
     if not api_key:
         sys.exit(
             "GEMINI_API_KEY не задан. Скопируй .env.example в .env и вставь ключ "
