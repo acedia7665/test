@@ -1,0 +1,13 @@
+# Секреты
+.env
+
+# Локальные данные пользователя
+pdfs/*
+!pdfs/.gitkeep
+digest.xlsx
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
